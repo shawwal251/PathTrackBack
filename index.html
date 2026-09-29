@@ -1,0 +1,888 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="description" content="RouteTrace — record, save and retrace routes with live GPS tracking.">
+    <title>RouteTrace — Navigate With Confidence</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=DM+Sans:wght@400;500;600&display=swap"
+        rel="stylesheet">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        navy: { 900: '#0a1628', 800: '#0f2847', 700: '#163456', 600: '#1e4268' },
+                        cyan: { 400: '#00d4ff', 500: '#00b8e6' }
+                    },
+                    fontFamily: {
+                        display: ['Space Grotesk', 'sans-serif'],
+                        body: ['DM Sans', 'sans-serif']
+                    }
+                }
+            }
+        };
+    </script>
+    <style>
+        :root {
+            --bg: #0a1628;
+            --bg2: #0f2847;
+            --fg: #fff;
+            --muted: #9ab8d5;
+            --accent: #00d4ff;
+            --border: rgba(154, 184, 213, .22);
+            --card: rgba(10, 22, 40, .86);
+            --danger: #ef4444;
+            --safe-bottom: max(16px, env(safe-area-inset-bottom))
+        }
+
+        * {
+            box-sizing: border-box
+        }
+
+        html,
+        body {
+            margin: 0;
+            width: 100%;
+            height: 100%;
+            font-family: 'DM Sans', sans-serif;
+            background: var(--bg);
+            color: var(--fg)
+        }
+
+        body {
+            overflow: hidden
+        }
+
+        button,
+        input {
+            font: inherit
+        }
+
+        button {
+            touch-action: manipulation
+        }
+
+        .font-display {
+            font-family: 'Space Grotesk', sans-serif
+        }
+
+        #map {
+            position: fixed;
+            inset: 0;
+            width: 100%;
+            height: 100dvh;
+            z-index: 1
+        }
+
+        .leaflet-tile-pane {
+            filter: saturate(.78) brightness(.82)
+        }
+
+        .leaflet-control-zoom {
+            border: 0 !important;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, .3) !important
+        }
+
+        .leaflet-control-zoom a {
+            background: rgba(15, 40, 71, .9) !important;
+            color: #fff !important;
+            border: 1px solid var(--border) !important
+        }
+
+        .leaflet-control-zoom a:hover {
+            background: #163456 !important;
+            color: var(--accent) !important
+        }
+
+        .leaflet-control-attribution {
+            font-size: 10px
+        }
+
+        .glass {
+            background: var(--card);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid var(--border)
+        }
+
+        .btn {
+            border: 1px solid var(--border);
+            transition: transform .2s ease, box-shadow .2s ease, background .2s ease, border-color .2s ease
+        }
+
+        .btn:hover:not(:disabled) {
+            transform: translateY(-1px)
+        }
+
+        .btn:active:not(:disabled) {
+            transform: translateY(0)
+        }
+
+        .btn:disabled {
+            opacity: .42;
+            cursor: not-allowed
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #00d4ff, #0088cc);
+            color: #06111e;
+            font-weight: 700;
+            box-shadow: 0 5px 22px rgba(0, 212, 255, .25)
+        }
+
+        .btn-danger {
+            background: linear-gradient(135deg, #ef4444, #b91c1c);
+            color: #fff;
+            font-weight: 700;
+            box-shadow: 0 5px 22px rgba(239, 68, 68, .25)
+        }
+
+        .btn-secondary {
+            background: rgba(255, 255, 255, .055);
+            color: #fff
+        }
+
+        .btn-secondary:hover:not(:disabled) {
+            background: rgba(255, 255, 255, .1);
+            border-color: var(--accent)
+        }
+
+        .status-dot {
+            width: 9px;
+            height: 9px;
+            border-radius: 50%;
+            flex: 0 0 auto
+        }
+
+        .status-dot.live {
+            animation: blink 1.5s ease-in-out infinite
+        }
+
+        @keyframes blink {
+            50% {
+                opacity: .35
+            }
+        }
+
+        .drawer {
+            transform: translateY(calc(100% - 58px));
+            transition: transform .35s ease
+        }
+
+        .drawer.open {
+            transform: translateY(0)
+        }
+
+        .route-card {
+            transition: background .2s, border-color .2s, transform .2s
+        }
+
+        .route-card:hover {
+            transform: translateY(-1px);
+            border-color: var(--accent)
+        }
+
+        .toast {
+            transform: translateX(calc(100% + 24px));
+            transition: transform .35s ease
+        }
+
+        .toast.show {
+            transform: translateX(0)
+        }
+
+        .modal {
+            display: none
+        }
+
+        .modal.show {
+            display: flex
+        }
+
+        .spinner {
+            width: 18px;
+            height: 18px;
+            border: 2px solid rgba(255, 255, 255, .25);
+            border-top-color: currentColor;
+            border-radius: 50%;
+            animation: spin .8s linear infinite
+        }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg)
+            }
+        }
+
+        .focus-ring:focus-visible,
+        button:focus-visible,
+        input:focus-visible {
+            outline: 2px solid var(--accent);
+            outline-offset: 2px
+        }
+
+        @media(max-width:640px) {
+            .desktop-label {
+                display: none
+            }
+
+            .top-panel {
+                top: 78px !important;
+                left: 10px !important;
+                right: 10px !important;
+                transform: none !important;
+                width: auto
+            }
+
+            .stats {
+                justify-content: space-between;
+                width: 100%
+            }
+
+            .stat {
+                padding: 0 8px !important
+            }
+
+            .action-bar {
+                left: 10px !important;
+                right: 10px !important;
+                bottom: calc(68px + var(--safe-bottom)) !important;
+                transform: none !important;
+                width: auto
+            }
+
+            .action-row {
+                display: grid !important;
+                grid-template-columns: 1fr 1.35fr 1fr;
+                width: 100%;
+                gap: 8px !important
+            }
+
+            .action-row button {
+                justify-content: center;
+                padding: 12px 8px !important;
+                min-width: 0
+            }
+
+            .drawer {
+                max-height: 78dvh
+            }
+
+            .drawer-list {
+                max-height: 55dvh !important
+            }
+
+            .toast {
+                left: 10px;
+                right: 10px;
+                top: 74px;
+                width: auto;
+                transform: translateY(-150%)
+            }
+
+            .toast.show {
+                transform: translateY(0)
+            }
+        }
+
+        @media(max-width:390px) {
+            .brand-subtitle {
+                display: none
+            }
+
+            .action-row button {
+                font-size: 12px
+            }
+
+            .action-row svg {
+                width: 18px;
+                height: 18px
+            }
+        }
+
+        @media(prefers-reduced-motion:reduce) {
+
+            *,
+            *::before,
+            *::after {
+                animation-duration: .01ms !important;
+                animation-iteration-count: 1 !important;
+                transition-duration: .01ms !important;
+                scroll-behavior: auto !important
+            }
+        }
+    </style>
+</head>
+
+<body>
+
+    <nav class="fixed top-0 left-0 right-0 z-50 glass">
+        <div class="max-w-7xl mx-auto px-3 sm:px-6 py-3 flex items-center justify-between gap-3">
+            <div class="flex items-center gap-3 min-w-0">
+                <div
+                    class="w-10 h-10 shrink-0 rounded-xl bg-gradient-to-br from-cyan-400 to-cyan-600 flex items-center justify-center">
+                    <svg class="w-6 h-6 text-navy-900" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" />
+                    </svg>
+                </div>
+                <div class="min-w-0">
+                    <h1 class="font-display font-bold text-xl tracking-tight truncate">RouteTrace</h1>
+                    <p class="brand-subtitle text-xs text-slate-300">Navigate with confidence</p>
+                </div>
+            </div>
+            <div class="flex items-center gap-2">
+                <button id="locateBtn" class="btn btn-secondary p-2 rounded-lg" aria-label="Show my location"
+                    title="Show my location">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M12 2v3m0 14v3M2 12h3m14 0h3m-4.22-4.22l-2.12 2.12m-7.32 7.32l-2.12 2.12m0-11.56l2.12 2.12m7.32 7.32l2.12 2.12M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
+                    </svg>
+                </button>
+                <button id="exportBtn" class="btn btn-secondary px-3 py-2 rounded-lg text-sm flex items-center gap-2"
+                    aria-label="Export routes">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                    </svg>
+                    <span class="desktop-label">Export</span>
+                </button>
+            </div>
+        </div>
+    </nav>
+
+    <div id="map" aria-label="Interactive route map"></div>
+
+    <div class="top-panel fixed top-24 left-1/2 -translate-x-1/2 z-40">
+        <div class="glass rounded-2xl p-3 sm:p-4 shadow-2xl">
+            <div class="flex items-center gap-2 mb-2">
+                <div id="statusIndicator" class="status-dot bg-slate-500"></div>
+                <span id="statusText" class="text-sm text-slate-200">Ready to track</span>
+            </div>
+            <div class="stats flex items-center gap-1 sm:gap-3 text-sm">
+                <div class="stat text-center px-3">
+                    <p id="distanceDisplay" class="font-display font-bold text-lg">0.00</p>
+                    <p class="text-xs text-slate-300">km</p>
+                </div>
+                <div class="w-px h-8 bg-white/15"></div>
+                <div class="stat text-center px-3">
+                    <p id="pointsDisplay" class="font-display font-bold text-lg">0</p>
+                    <p class="text-xs text-slate-300">points</p>
+                </div>
+                <div class="w-px h-8 bg-white/15"></div>
+                <div class="stat text-center px-3">
+                    <p id="durationDisplay" class="font-display font-bold text-lg">00:00</p>
+                    <p class="text-xs text-slate-300">time</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="action-bar fixed bottom-32 left-1/2 -translate-x-1/2 z-40">
+        <div class="action-row flex items-center gap-3">
+            <button id="goBackBtn" class="btn btn-secondary px-5 py-3 rounded-xl font-medium flex items-center gap-2"
+                disabled>
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
+                </svg>
+                <span class="desktop-label">Go Back</span><span class="sm:hidden">Back</span>
+            </button>
+            <button id="mainActionBtn"
+                class="btn btn-primary px-8 py-4 rounded-xl font-display font-semibold flex items-center gap-3 text-lg">
+                <svg id="startIcon" class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <span id="mainActionText">Start Tracking</span>
+            </button>
+            <button id="saveRouteBtn" class="btn btn-secondary px-5 py-3 rounded-xl font-medium flex items-center gap-2"
+                disabled>
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
+                </svg>
+                <span class="desktop-label">Save</span>
+            </button>
+        </div>
+    </div>
+
+    <div id="drawer" class="drawer fixed bottom-0 left-0 right-0 z-40 glass rounded-t-3xl shadow-2xl">
+        <button id="drawerToggle" class="w-full py-3 flex flex-col items-center" aria-expanded="false"
+            aria-label="Toggle saved routes">
+            <div class="w-12 h-1 bg-slate-400 rounded-full mb-2"></div>
+            <span class="text-xs text-slate-300 font-medium">Saved Routes</span>
+        </button>
+        <div class="px-4 pb-4">
+            <div class="flex items-center justify-between mb-4">
+                <h2 class="font-display font-semibold text-lg">Your Routes</h2>
+                <span id="routeCount" class="text-sm text-slate-200 bg-navy-700 px-3 py-1 rounded-full">0 routes</span>
+            </div>
+            <div id="routesList" class="drawer-list space-y-3 max-h-[40vh] overflow-y-auto pr-1"></div>
+        </div>
+    </div>
+
+    <div id="saveModal" class="modal fixed inset-0 z-[60] items-center justify-center p-4">
+        <div id="modalOverlay" class="absolute inset-0 bg-black/70 backdrop-blur-sm"></div>
+        <div class="glass rounded-2xl p-5 sm:p-6 w-full max-w-md relative z-10 shadow-2xl">
+            <h3 class="font-display font-bold text-xl mb-4">Save Route</h3>
+            <input type="text" id="routeNameInput" maxlength="80" autocomplete="off"
+                placeholder="e.g. Trip to Kanjedza Market"
+                class="w-full bg-navy-800 border border-white/15 rounded-xl px-4 py-3 text-white placeholder-slate-400 focus:border-cyan-400 focus:outline-none mb-4">
+            <div class="glass rounded-xl p-4 mb-4 space-y-2 text-sm">
+                <div class="flex justify-between"><span class="text-slate-300">Distance</span><span
+                        id="modalDistance">0.00 km</span></div>
+                <div class="flex justify-between"><span class="text-slate-300">Points</span><span
+                        id="modalPoints">0</span></div>
+                <div class="flex justify-between"><span class="text-slate-300">Duration</span><span
+                        id="modalDuration">00:00</span></div>
+            </div>
+            <div class="flex gap-3">
+                <button id="cancelSaveBtn" class="btn btn-secondary flex-1 py-3 rounded-xl font-medium">Cancel</button>
+                <button id="confirmSaveBtn" class="btn btn-primary flex-1 py-3 rounded-xl font-medium">Save
+                    Route</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="toast" role="status" aria-live="polite"
+        class="toast fixed top-20 right-4 z-[70] glass rounded-xl px-4 py-3 flex items-center gap-3 shadow-xl max-w-sm">
+        <div id="toastIcon" class="w-8 h-8 rounded-full bg-green-500/20 flex items-center justify-center shrink-0"><svg
+                class="w-5 h-5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"></svg></div>
+        <div>
+            <p id="toastTitle" class="font-medium text-sm">Success</p>
+            <p id="toastMessage" class="text-xs text-slate-300">Done</p>
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        'use strict';
+
+        const STORAGE_KEY = 'routetrace_routes_v2';
+        const defaultCenter = [-13.9626, 33.7741];
+
+        const state = {
+            map: null, marker: null, accuracyCircle: null, polyline: null, returnPolyline: null,
+            startMarker: null, endMarker: null, currentPosition: null,
+            isTracking: false, isReturning: false, watchId: null, timerInterval: null,
+            startTime: null, currentRoute: [], savedRoutes: [], distanceMeters: 0,
+            returnTargetIndex: null, lastToastTimer: null
+        };
+
+        const $ = id => document.getElementById(id);
+        const el = {
+            map: $('map'), main: $('mainActionBtn'), mainText: $('mainActionText'), startIcon: $('startIcon'),
+            back: $('goBackBtn'), save: $('saveRouteBtn'), locate: $('locateBtn'), export: $('exportBtn'),
+            statusDot: $('statusIndicator'), statusText: $('statusText'), distance: $('distanceDisplay'),
+            points: $('pointsDisplay'), duration: $('durationDisplay'), drawer: $('drawer'), drawerToggle: $('drawerToggle'),
+            routes: $('routesList'), count: $('routeCount'), modal: $('saveModal'), overlay: $('modalOverlay'),
+            name: $('routeNameInput'), modalDistance: $('modalDistance'), modalPoints: $('modalPoints'),
+            modalDuration: $('modalDuration'), cancel: $('cancelSaveBtn'), confirm: $('confirmSaveBtn'),
+            toast: $('toast'), toastIcon: $('toastIcon'), toastTitle: $('toastTitle'), toastMessage: $('toastMessage')
+        };
+
+        function init() {
+            loadRoutes();
+            initMap();
+            renderRoutes();
+            bindEvents();
+        }
+
+        function initMap() {
+            state.map = L.map(el.map, { center: defaultCenter, zoom: 14, zoomControl: false, preferCanvas: true });
+            L.control.zoom({ position: 'bottomright' }).addTo(state.map);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '© OpenStreetMap contributors', maxZoom: 19
+            }).addTo(state.map);
+
+            if (!('geolocation' in navigator)) {
+                setStatus('GPS unavailable', 'bg-red-400');
+                showToast('Location unavailable', 'This browser does not provide GPS location.', 'error');
+                return;
+            }
+            navigator.geolocation.getCurrentPosition(
+                pos => handlePosition(pos, false),
+                err => handleGeoError(err, false),
+                { enableHighAccuracy: true, maximumAge: 10000, timeout: 12000 }
+            );
+        }
+
+        function markerIcon(type) {
+            const colors = { start: '#22c55e', end: '#ef4444', user: '#00d4ff' };
+            const color = colors[type] || colors.user;
+            if (type === 'user') {
+                return L.divIcon({
+                    className: 'custom-user-marker',
+                    html: `<div style="width:16px;height:16px;background:${color};border:3px solid #fff;border-radius:50%;box-shadow:0 2px 12px rgba(0,0,0,.45)"></div>`,
+                    iconSize: [16, 16], iconAnchor: [8, 8]
+                });
+            }
+            return L.divIcon({
+                className: 'route-point-marker',
+                html: `<div style="width:26px;height:26px;background:${color};border:2px solid #fff;border-radius:50%;display:grid;place-items:center;box-shadow:0 2px 12px rgba(0,0,0,.4)"><span style="width:7px;height:7px;background:#fff;border-radius:50%"></span></div>`,
+                iconSize: [26, 26], iconAnchor: [13, 13]
+            });
+        }
+
+        function updateCurrentPosition(lat, lng, accuracy = 0, pan = false) {
+            state.currentPosition = { lat, lng, accuracy, time: Date.now() };
+            if (!state.marker) state.marker = L.marker([lat, lng], { icon: markerIcon('user'), zIndexOffset: 1000 }).addTo(state.map);
+            else state.marker.setLatLng([lat, lng]);
+            if (accuracy > 0) {
+                if (!state.accuracyCircle) state.accuracyCircle = L.circle([lat, lng], { radius: accuracy, color: '#00d4ff', fillColor: '#00d4ff', fillOpacity: .08, weight: 1 }).addTo(state.map);
+                else state.accuracyCircle.setLatLng([lat, lng]).setRadius(accuracy);
+            }
+            if (pan) state.map.setView([lat, lng], Math.max(state.map.getZoom(), 16), { animate: true });
+        }
+
+        function handlePosition(pos, record) {
+            const { latitude: lat, longitude: lng, accuracy } = pos.coords;
+            if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+            updateCurrentPosition(lat, lng, accuracy, false);
+            if (record && state.isTracking) recordPoint(lat, lng, accuracy);
+            if (state.isReturning) updateReturnGuidance(lat, lng);
+        }
+
+        function handleGeoError(err, initial = true) {
+            const messages = {
+                1: 'Location permission was denied. Allow location access in your browser.',
+                2: 'Your location could not be determined. Check GPS/network settings.',
+                3: 'Location request timed out. Try moving outdoors or enable high-accuracy location.'
+            };
+            const msg = messages[err.code] || 'Unable to read your location.';
+            console.warn('Geolocation:', err);
+            setStatus(initial ? 'Location permission needed' : 'GPS signal problem', initial ? 'bg-yellow-400' : 'bg-red-400');
+            showToast('Location issue', msg, 'warning');
+            if (state.isTracking) stopTracking(false);
+        }
+
+        function setStatus(text, color = 'bg-gray-500', live = false) {
+            el.statusText.textContent = text;
+            el.statusDot.className = `status-dot ${color}${live ? ' live' : ''}`;
+        }
+
+        function startTracking() {
+            if (!('geolocation' in navigator)) {
+                showToast('GPS unavailable', 'Your browser does not support location tracking.', 'error'); return;
+            }
+            if (state.isReturning) stopReturnNavigation();
+
+            clearRouteLayers();
+            state.isTracking = true;
+            state.currentRoute = [];
+            state.distanceMeters = 0;
+            state.startTime = Date.now();
+
+            setStatus('Waiting for accurate GPS…', 'bg-yellow-400', true);
+            el.mainText.textContent = 'Stop Tracking';
+            el.main.classList.remove('btn-primary'); el.main.classList.add('btn-danger');
+            el.startIcon.innerHTML = '<rect x="6" y="6" width="12" height="12" rx="1" fill="currentColor"/>';
+            el.save.disabled = true; el.back.disabled = true;
+            updateStats();
+
+            state.watchId = navigator.geolocation.watchPosition(
+                pos => handlePosition(pos, true),
+                err => handleGeoError(err, false),
+                { enableHighAccuracy: true, maximumAge: 2000, timeout: 15000 }
+            );
+            state.timerInterval = setInterval(updateTimer, 1000);
+            showToast('Tracking started', 'Move normally. GPS points are filtered for accuracy and jitter.', 'info');
+        }
+
+        function recordPoint(lat, lng, accuracy) {
+            // Ignore low-quality GPS fixes.
+            if (accuracy > 50) return;
+            const last = state.currentRoute[state.currentRoute.length - 1];
+            if (last) {
+                const d = calculateDistance(last.lat, last.lng, lat, lng);
+                // Ignore tiny GPS jitter while stationary and impossible jumps.
+                if (d < 5) return;
+                if (d > 250 && Date.now() - last.time < 5000) return;
+                state.distanceMeters += d;
+            }
+            state.currentRoute.push({ lat, lng, accuracy, time: Date.now() });
+            drawRoute();
+            updateStats();
+            if (state.currentRoute.length === 1) setStatus('Recording route…', 'bg-green-400', true);
+        }
+
+        function stopTracking(showComplete = true) {
+            state.isTracking = false;
+            if (state.watchId !== null) { navigator.geolocation.clearWatch(state.watchId); state.watchId = null }
+            if (state.timerInterval) { clearInterval(state.timerInterval); state.timerInterval = null }
+            el.mainText.textContent = 'Start Tracking';
+            el.main.classList.remove('btn-danger'); el.main.classList.add('btn-primary');
+            el.startIcon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0z"/>';
+            el.save.disabled = state.currentRoute.length < 2;
+            el.back.disabled = state.currentRoute.length < 2;
+            if (state.currentRoute.length > 1) {
+                addEndMarker();
+                setStatus('Route recorded', 'bg-yellow-400');
+            } else setStatus('No route recorded', 'bg-slate-500');
+            if (showComplete) showToast('Tracking complete', `${state.currentRoute.length} GPS points recorded.`, 'success');
+        }
+
+        function drawRoute() {
+            if (state.currentRoute.length < 2) return;
+            const latLngs = state.currentRoute.map(p => [p.lat, p.lng]);
+            if (!state.polyline) state.polyline = L.polyline(latLngs, { color: '#00d4ff', weight: 5, opacity: .9, lineJoin: 'round', lineCap: 'round' }).addTo(state.map);
+            else state.polyline.setLatLngs(latLngs);
+            if (state.currentRoute.length === 2) addStartMarker();
+        }
+
+        function addStartMarker() {
+            if (state.startMarker || !state.currentRoute.length) return;
+            const p = state.currentRoute[0];
+            state.startMarker = L.marker([p.lat, p.lng], { icon: markerIcon('start'), zIndexOffset: 500 }).addTo(state.map).bindTooltip('Start', { permanent: false });
+        }
+        function addEndMarker() {
+            if (state.endMarker) state.map.removeLayer(state.endMarker);
+            const p = state.currentRoute[state.currentRoute.length - 1];
+            if (!p) return;
+            state.endMarker = L.marker([p.lat, p.lng], { icon: markerIcon('end'), zIndexOffset: 500 }).addTo(state.map).bindTooltip('End', { permanent: false });
+        }
+        function clearRouteLayers() {
+            ['polyline', 'returnPolyline', 'startMarker', 'endMarker'].forEach(k => {
+                if (state[k]) { state.map.removeLayer(state[k]); state[k] = null }
+            });
+        }
+
+        function calculateDistance(lat1, lon1, lat2, lon2) {
+            const R = 6371000, rad = Math.PI / 180, dLat = (lat2 - lat1) * rad, dLon = (lon2 - lon1) * rad;
+            const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * rad) * Math.cos(lat2 * rad) * Math.sin(dLon / 2) ** 2;
+            return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        }
+
+        function updateStats() {
+            el.points.textContent = state.currentRoute.length;
+            el.distance.textContent = (state.distanceMeters / 1000).toFixed(2);
+        }
+        function updateTimer() {
+            if (!state.startTime) return;
+            el.duration.textContent = formatDuration(Math.floor((Date.now() - state.startTime) / 1000));
+        }
+        function formatDuration(seconds) {
+            const h = Math.floor(seconds / 3600), m = Math.floor((seconds % 3600) / 60), s = seconds % 60;
+            return h ? `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}` : `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+        }
+
+        function goBack() {
+            if (state.currentRoute.length < 2 || !state.currentPosition) {
+                showToast('Cannot navigate back', 'Record a route and make sure GPS is available.', 'warning'); return;
+            }
+            if (state.isTracking) stopTracking(false);
+            if (state.isReturning) { stopReturnNavigation(); return }
+            state.isReturning = true;
+            state.returnTargetIndex = state.currentRoute.length - 1;
+            drawReturnPath();
+            el.back.disabled = false;
+            el.back.innerHTML = '<div class="spinner"></div><span>Navigating…</span>';
+            setStatus('Follow the orange route back', 'bg-orange-400', true);
+            showToast('Return navigation', 'Move toward the orange route. Your live GPS position is being tracked.', 'info');
+            updateReturnGuidance(state.currentPosition.lat, state.currentPosition.lng);
+        }
+
+        function drawReturnPath() {
+            const points = [...state.currentRoute].reverse().map(p => [p.lat, p.lng]);
+            if (state.returnPolyline) state.map.removeLayer(state.returnPolyline);
+            state.returnPolyline = L.polyline(points, { color: '#f97316', weight: 5, opacity: .9, dashArray: '10 10', lineJoin: 'round' }).addTo(state.map);
+        }
+
+        function updateReturnGuidance(lat, lng) {
+            if (!state.isReturning) return;
+            const targetIndex = findClosestRouteIndex(lat, lng);
+            state.returnTargetIndex = targetIndex;
+            const target = state.currentRoute[targetIndex];
+            const distanceToStart = calculateDistance(lat, lng, state.currentRoute[0].lat, state.currentRoute[0].lng);
+
+            if (distanceToStart <= 15) {
+                stopReturnNavigation(true);
+                return;
+            }
+            const bearing = bearingBetween(lat, lng, target.lat, target.lng);
+            const dist = Math.round(calculateDistance(lat, lng, target.lat, target.lng));
+            setStatus(dist <= 25 ? 'On route — continue to start' : `Move toward route • ${dist} m`, 'bg-orange-400', true);
+            if (dist > 25) showToast('Return guidance', `Target point is about ${dist} m away.`, 'info', 1500);
+        }
+
+        function findClosestRouteIndex(lat, lng) {
+            let best = 0, bestD = Infinity;
+            for (let i = 0; i < state.currentRoute.length; i++) {
+                const p = state.currentRoute[i], d = calculateDistance(lat, lng, p.lat, p.lng);
+                if (d < bestD) { bestD = d; best = i }
+            }
+            return best;
+        }
+        function bearingBetween(lat1, lon1, lat2, lon2) {
+            const r = Math.PI / 180, y = Math.sin((lon2 - lon1) * r) * Math.cos(lat2 * r);
+            const x = Math.cos(lat1 * r) * Math.sin(lat2 * r) - Math.sin(lat1 * r) * Math.cos(lat2 * r) * Math.cos((lon2 - lon1) * r);
+            return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+        }
+        function stopReturnNavigation(arrived = false) {
+            state.isReturning = false; state.returnTargetIndex = null;
+            if (state.returnPolyline) { state.map.removeLayer(state.returnPolyline); state.returnPolyline = null }
+            el.back.innerHTML = '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"/></svg><span class="desktop-label">Go Back</span><span class="sm:hidden">Back</span>';
+            el.back.disabled = state.currentRoute.length < 2;
+            if (arrived) { setStatus('You have arrived at the start', 'bg-green-400'); showToast('Arrived', 'You are back at the starting point.', 'success') }
+            else setStatus('Route recorded', 'bg-yellow-400');
+        }
+
+        function openSaveModal() {
+            if (state.currentRoute.length < 2) return;
+            el.modalDistance.textContent = `${(state.distanceMeters / 1000).toFixed(2)} km`;
+            el.modalPoints.textContent = state.currentRoute.length;
+            el.modalDuration.textContent = el.duration.textContent;
+            el.name.value = '';
+            el.modal.classList.add('show');
+            setTimeout(() => el.name.focus(), 50);
+        }
+        function closeSaveModal() { el.modal.classList.remove('show') }
+        function saveRoute() {
+            if (state.currentRoute.length < 2) return;
+            const name = el.name.value.trim() || `Route ${state.savedRoutes.length + 1}`;
+            const route = {
+                id: crypto.randomUUID ? crypto.randomUUID() : String(Date.now()),
+                name,
+                points: state.currentRoute.map(p => ({ lat: p.lat, lng: p.lng, accuracy: p.accuracy, time: p.time })),
+                distance: Number((state.distanceMeters / 1000).toFixed(3)),
+                duration: el.duration.textContent,
+                createdAt: new Date().toISOString()
+            };
+            state.savedRoutes.unshift(route);
+            persistRoutes();
+            renderRoutes();
+            closeSaveModal();
+            showToast('Route saved', `“${name}” is available offline on this device.`, 'success');
+        }
+
+        function loadRoutes() {
+            try {
+                const raw = localStorage.getItem(STORAGE_KEY);
+                const parsed = raw ? JSON.parse(raw) : [];
+                state.savedRoutes = Array.isArray(parsed) ? parsed.filter(isValidRoute) : [];
+            } catch (e) { console.warn('Could not load routes', e); state.savedRoutes = [] }
+        }
+        function isValidRoute(r) { return r && r.id && typeof r.name === 'string' && Array.isArray(r.points) && r.points.length > 0 }
+        function persistRoutes() {
+            try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state.savedRoutes)) }
+            catch (e) { showToast('Storage full', 'The route could not be saved. Export routes and remove old records.', 'error') }
+        }
+
+        function renderRoutes() {
+            el.count.textContent = `${state.savedRoutes.length} route${state.savedRoutes.length === 1 ? '' : 's'}`;
+            if (!state.savedRoutes.length) {
+                el.routes.innerHTML = '<div class="text-center py-8 text-slate-300"><svg class="w-12 h-12 mx-auto mb-3 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7"/></svg><p class="text-sm">No saved routes yet</p><p class="text-xs mt-1">Start tracking to record your first route</p></div>';
+                return;
+            }
+            el.routes.innerHTML = '';
+            state.savedRoutes.forEach(route => {
+                const card = document.createElement('div');
+                card.className = 'route-card glass rounded-xl p-4 border border-transparent';
+                const title = document.createElement('h3'); title.className = 'font-medium text-white mb-1 truncate'; title.textContent = route.name;
+                const date = document.createElement('p'); date.className = 'text-xs text-slate-300 mb-2'; date.textContent = new Date(route.createdAt).toLocaleString();
+                const meta = document.createElement('div'); meta.className = 'flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-300';
+                meta.textContent = `${Number(route.distance || 0).toFixed(2)} km  •  ${route.duration || '00:00'}  •  ${route.points.length} pts`;
+                const content = document.createElement('div'); content.className = 'min-w-0 flex-1'; content.append(title, date, meta);
+                const actions = document.createElement('div'); actions.className = 'flex items-center gap-2 shrink-0';
+                const load = document.createElement('button'); load.className = 'btn p-2 rounded-lg bg-cyan-400/15 text-cyan-300'; load.setAttribute('aria-label', 'Load route'); load.innerHTML = '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>';
+                load.onclick = e => { e.stopPropagation(); loadRoute(route.id) };
+                const del = document.createElement('button'); del.className = 'btn p-2 rounded-lg bg-red-400/15 text-red-300'; del.setAttribute('aria-label', 'Delete route'); del.innerHTML = '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>';
+                del.onclick = e => { e.stopPropagation(); deleteRoute(route.id) };
+                actions.append(load, del); card.append(content, actions);
+                card.style.display = 'flex'; card.style.gap = '12px'; card.style.alignItems = 'flex-start';
+                card.onclick = () => loadRoute(route.id);
+                el.routes.appendChild(card);
+            });
+        }
+
+        function loadRoute(id) {
+            const route = state.savedRoutes.find(r => String(r.id) === String(id));
+            if (!route) return;
+            if (state.isTracking) stopTracking(false);
+            if (state.isReturning) stopReturnNavigation();
+            clearRouteLayers();
+            state.currentRoute = route.points.map(p => ({ ...p }));
+            state.distanceMeters = Number(route.distance || 0) * 1000;
+            drawRoute(); addStartMarker(); addEndMarker(); updateStats();
+            el.duration.textContent = route.duration || '00:00';
+            el.save.disabled = true; el.back.disabled = state.currentRoute.length < 2;
+            setStatus(`Loaded: ${route.name}`, 'bg-yellow-400');
+            if (state.polyline) state.map.fitBounds(state.polyline.getBounds(), { padding: [60, 60], maxZoom: 17 });
+            showToast('Route loaded', 'The saved route is now displayed on the map.', 'success');
+        }
+
+        function deleteRoute(id) {
+            const route = state.savedRoutes.find(r => String(r.id) === String(id));
+            if (!route) return;
+            if (!confirm(`Delete “${route.name}”?`)) return;
+            state.savedRoutes = state.savedRoutes.filter(r => String(r.id) !== String(id));
+            persistRoutes(); renderRoutes(); showToast('Route deleted', 'The saved route was removed.', 'success');
+        }
+
+        function exportRoutes() {
+            if (!state.savedRoutes.length) { showToast('Nothing to export', 'Save at least one route first.', 'warning'); return }
+            const payload = { app: 'RouteTrace', version: 2, exportedAt: new Date().toISOString(), routes: state.savedRoutes };
+            const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob), a = document.createElement('a');
+            a.href = url; a.download = `routetrace_${new Date().toISOString().slice(0, 10)}.json`;
+            document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+            showToast('Export complete', `${state.savedRoutes.length} route(s) exported as JSON.`, 'success');
+        }
+
+        function locate() {
+            if (!state.currentPosition) {
+                if (!navigator.geolocation) { showToast('GPS unavailable', 'Location is not supported by this browser.', 'error'); return }
+                navigator.geolocation.getCurrentPosition(p => { handlePosition(p, false); locate() }, e => handleGeoError(e), { enableHighAccuracy: true, timeout: 12000, maximumAge: 5000 });
+                return;
+            }
+            updateCurrentPosition(state.currentPosition.lat, state.currentPosition.lng, state.currentPosition.accuracy, true);
+        }
+
+        function toggleDrawer() {
+            const open = el.drawer.classList.toggle('open');
+            el.drawerToggle.setAttribute('aria-expanded', String(open));
+            setTimeout(() => state.map.invalidateSize(), 360);
+        }
+
+        function showToast(title, message, type = 'success', duration = 3000) {
+            const icons = {
+                success: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>',
+                error: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>',
+                warning: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3.464 1.732 3z"/>',
+                info: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>'
+            };
+            const classes = { success: 'text-green-400 bg-green-500/20', error: 'text-red-400 bg-red-500/20', warning: 'text-yellow-400 bg-yellow-500/20', info: 'text-cyan-400 bg-cyan-500/20' };
+            el.toastIcon.className = `w-8 h-8 rounded-full flex items-center justify-center ${classes[type] || classes.info}`;
+            el.toastIcon.querySelector('svg').className = `w-5 h-5 ${classes[type] || classes.info}`; el.toastIcon.querySelector('svg').innerHTML = icons[type] || icons.info;
+            el.toastTitle.textContent = title; el.toastMessage.textContent = message; el.toast.classList.add('show');
+            clearTimeout(state.lastToastTimer); state.lastToastTimer = setTimeout(() => el.toast.classList.remove('show'), duration);
+        }
+
+        function bindEvents() {
+            el.main.onclick = () => state.isTracking ? stopTracking() : startTracking();
+            el.back.onclick = () => state.isReturning ? stopReturnNavigation() : goBack();
+            el.save.onclick = openSaveModal; el.cancel.onclick = closeSaveModal; el.overlay.onclick = closeSaveModal;
+            el.confirm.onclick = saveRoute; el.export.onclick = exportRoutes; el.locate.onclick = locate; el.drawerToggle.onclick = toggleDrawer;
+            el.name.onkeydown = e => { if (e.key === 'Enter') saveRoute(); if (e.key === 'Escape') closeSaveModal() };
+            document.addEventListener('keydown', e => { if (e.key === 'Escape') closeSaveModal() });
+            window.addEventListener('resize', () => state.map && state.map.invalidateSize());
+            document.addEventListener('visibilitychange', () => {
+                if (document.visibilityState === 'visible' && state.map) setTimeout(() => state.map.invalidateSize(), 100);
+            });
+        }
+
+        init();
+    </script>
+</body>
+
+</html>
